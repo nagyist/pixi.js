@@ -4,7 +4,7 @@
  * Copyright (c) 2012, Mat Groves
  * http://goodboydigital.com/
  *
- * Compiled: 2013-09-30
+ * Compiled: 2013-10-24
  *
  * Pixi.JS is licensed under the MIT License.
  * http://www.opensource.org/licenses/mit-license.php
@@ -1318,7 +1318,7 @@ PIXI.DisplayObjectContainer.prototype.addChild = function(child)
 	var previousObject;
 	
 	// this could be wrong if there is a filter??
-	if(this._filters)
+	if(this._filters || this._mask)
 	{
 		previousObject =  this.last._iPrev;
 	}
@@ -2010,6 +2010,112 @@ Object.defineProperty(PIXI.ColorMatrixFilter.prototype, 'matrix', {
     },
     set: function(value) {
     	this.uniforms.matrix.value = value;
+    }
+});
+/**
+ * @author Mat Groves http://matgroves.com/ @Doormat23
+ */
+
+
+
+PIXI.GreyFilter = function()
+{
+	// set the uniforms
+	this.uniforms = {
+		grey: {type: 'f', value: 1},
+	};
+	
+	this.fragmentSrc = [
+	  "precision mediump float;",
+	  "varying vec2 vTextureCoord;",
+	  "varying float vColor;",
+	  "uniform sampler2D uSampler;",
+	  "uniform float grey;",
+	  "void main(void) {",
+	    "gl_FragColor = texture2D(uSampler, vTextureCoord);",
+		"gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.2126*gl_FragColor.r + 0.7152*gl_FragColor.g + 0.0722*gl_FragColor.b), grey);",
+	    "gl_FragColor = gl_FragColor * vColor;",
+	  "}"
+	];
+	
+	this.primitiveFragmentSrc = [
+	  "precision mediump float;",
+	  "varying vec4 vColor;",
+	  "uniform float grey;",
+	  "void main(void) {",
+		"gl_FragColor = vColor;",
+		"gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.2126*gl_FragColor.r + 0.7152*gl_FragColor.g + 0.0722*gl_FragColor.b), grey);",
+		"gl_FragColor = gl_FragColor * vColor;",
+	  "}"
+	];
+
+}
+
+Object.defineProperty(PIXI.GreyFilter.prototype, 'grey', {
+    get: function() {
+        return this.uniforms.grey.value;
+    },
+    set: function(value) {
+    	this.uniforms.grey.value = value;
+    }
+});
+
+/**
+ * @author Mat Groves http://matgroves.com/ @Doormat23
+ */
+
+
+
+PIXI.DisplacementFilter = function(texture)
+{
+	// set the uniforms
+	
+	this.uniforms = {
+		displacementMap: {type: 'sampler2D', value:texture},
+		scale:			 {type: 'f2', value:{x:30, y:30}},
+		mapDimensions:   {type: 'f2', value:{x:texture.width, y:texture.height}}
+	};
+	
+	this.fragmentSrc = [
+	  "precision mediump float;",
+	  "varying vec2 vTextureCoord;",
+	  "varying float vColor;",
+	  "uniform sampler2D displacementMap;",
+	  "uniform sampler2D uSampler;",
+	  "uniform vec2 scale;",
+	  "uniform vec2 mapDimensions;",// = vec2(256.0, 256.0);",
+	  "const vec2 textureDimensions = vec2(245.0, 263.0);",
+	  
+	  "void main(void) {",
+	  
+	  	"vec2 matSample = texture2D(displacementMap, vTextureCoord * (textureDimensions/mapDimensions)).xy;",
+		"matSample -= 0.5;",	  
+	 	"matSample *= scale;",
+	 	"matSample /= textureDimensions;",
+	    "gl_FragColor = texture2D(uSampler, vec2(vTextureCoord.x + matSample.x, vTextureCoord.y + matSample.y));",
+		"gl_FragColor.rgb = mix( gl_FragColor.rgb, gl_FragColor.rgb, 1.0);",
+	    "gl_FragColor = gl_FragColor * vColor;",
+	    
+	  "}"
+	];
+	
+}
+
+Object.defineProperty(PIXI.DisplacementFilter.prototype, 'map', {
+    get: function() {
+        return this.uniforms.displacementMap.value;
+    },
+    set: function(value) {
+    	this.uniforms.displacementMap.value = value;
+    }
+});
+
+Object.defineProperty(PIXI.DisplacementFilter.prototype, 'scale', {
+    get: function() {
+        return this.uniforms.scale.value;
+    },
+    set: function(value) {
+    	this.uniforms.scale.value = value;
     }
 });
 /**
@@ -3538,8 +3644,14 @@ PIXI.autoDetectRenderer = function(width, height, view, transparent, antialias)
 	if(!height)height = 600;
 
 	// BORROWED from Mr Doob (mrdoob.com)
-	var webgl = ( function () { try { return !! window.WebGLRenderingContext && !! document.createElement( 'canvas' ).getContext( 'experimental-webgl' ); } catch( e ) { return false; } } )();
+	var webgl = ( function () { try { var canvas = document.createElement( 'canvas' ); return !! window.WebGLRenderingContext && ( canvas.getContext( 'webgl' ) || canvas.getContext( 'experimental-webgl' ) ); } catch( e ) { return false; } } )();
 
+	if(webgl)
+	{
+		var ie =  (navigator.userAgent.toLowerCase().indexOf('msie') != -1);
+		 webgl = !ie;
+	}
+	
 	//console.log(webgl);
 	if( webgl )
 	{
@@ -3827,7 +3939,7 @@ PIXI.initDefaultShader = function()
 {
 	PIXI.defaultShader = new PIXI.PixiShader();
 	PIXI.defaultShader.init();
-	PIXI.activateShader(PIXI.defaultShader);
+	PIXI.pushShader(PIXI.defaultShader);
 	/*
 	PIXI.shaderStack.push(PIXI.defaultShader);
 	PIXI.current*/
@@ -3898,14 +4010,14 @@ PIXI.compileProgram = function(vertexSrc, fragmentSrc)
 	return shaderProgram;
 } 
 
-PIXI.activateShader = function(shader)
+PIXI.pushShader = function(shader)
 {
 	PIXI.shaderStack.push(shader);
-	
-	//console.log(">>>")
+
 	var gl = PIXI.gl;
 	
 	var shaderProgram = shader.program;
+	
 	
 	// map uniforms..
 	gl.useProgram(shaderProgram);
@@ -3923,7 +4035,6 @@ PIXI.activateShader = function(shader)
 PIXI.popShader = function()
 {
 	var gl = PIXI.gl;
-	// activate last program..
 	var lastProgram = PIXI.shaderStack.pop();
 	
 	var shaderProgram = PIXI.shaderStack[ PIXI.shaderStack.length-1 ].program;
@@ -3938,13 +4049,7 @@ PIXI.activatePrimitiveShader = function()
 	var gl = PIXI.gl;
 	
 	gl.useProgram(PIXI.primitiveProgram);
-	
-    //gl.disableVertexAttribArray(PIXI.currentShader.vertexPositionAttribute);
-	//gl.disableVertexAttribArray(PIXI.currentShader.colorAttribute);
 	gl.disableVertexAttribArray(PIXI.currentShader.textureCoordAttribute);
-    
-	//gl.enableVertexAttribArray(PIXI.primitiveProgram.vertexPositionAttribute);
-	//gl.enableVertexAttribArray(PIXI.primitiveProgram.colorAttribute);
 } 
 
 PIXI.deactivatePrimitiveShader = function()
@@ -3952,10 +4057,7 @@ PIXI.deactivatePrimitiveShader = function()
 	var gl = PIXI.gl;
 
 	gl.useProgram(PIXI.currentShader);
-	
 	gl.enableVertexAttribArray(PIXI.currentShader.textureCoordAttribute);
-	//gl.enableVertexAttribArray(PIXI.currentShader.vertexPositionAttribute);
-	//gl.enableVertexAttribArray(PIXI.currentShader.colorAttribute);
 }
 /**
  * @author Mat Groves http://matgroves.com/ @Doormat23
@@ -4019,9 +4121,28 @@ PIXI.PixiShader.prototype.syncUniforms = function()
     	{
 			gl.uniform1f(this.program[key], this.uniforms[key].value);
     	}
+    	if(type == "f2")
+    	{
+			gl.uniform2f(this.program[key], this.uniforms[key].value.x, this.uniforms[key].value.y);
+    	}
     	else if(type == "mat4")
     	{
     		gl.uniformMatrix4fv(this.program[key], false, this.uniforms[key].value);
+    	}
+    	else if(type == "sampler2D")
+    	{
+    		// first texture...
+    		var texture = this.uniforms[key].value;
+    		
+    		gl.activeTexture(gl.TEXTURE1);
+	    	gl.bindTexture(gl.TEXTURE_2D, texture.baseTexture._glTexture);
+	    	
+    		gl.uniform1i(this.program[key], 1);
+    		
+    		
+    		// activate texture..
+    		// gl.uniformMatrix4fv(this.program[key], false, this.uniforms[key].value);
+    		// gl.uniformMatrix4fv(this.program[key], false, this.uniforms[key].value);
     	}
     }
     
@@ -4590,19 +4711,25 @@ PIXI.WebGLRenderer = function(width, height, view, transparent, antialias)
 
 	this.batchs = [];
 
-	try 
- 	{
-        PIXI.gl = this.gl = this.view.getContext("experimental-webgl",  {  	
-    		 alpha: this.transparent,
-    		 antialias:!!antialias, // SPEED UP??
-    		 premultipliedAlpha:false,
-    		 stencil:true
-        });
-    } 
-    catch (e) 
-    {
-    	throw new Error(" This browser does not support webGL. Try using the canvas renderer" + this);
-    }
+	var options = {
+		alpha: this.transparent,
+		antialias:!!antialias, // SPEED UP??
+		premultipliedAlpha:false,
+		stencil:true
+	}
+
+	//try 'experimental-webgl'
+	try {
+		PIXI.gl = this.gl = this.view.getContext("experimental-webgl",  options);
+	} catch (e) {
+		//try 'webgl'
+		try {
+			PIXI.gl = this.gl = this.view.getContext("webgl",  options);
+		} catch (e) {
+			// fail, not able to get a context
+			throw new Error(" This browser does not support webGL. Try using the canvas renderer" + this);
+		}
+	}
 
     PIXI.initDefaultShader();
     PIXI.initPrimitiveShader();
@@ -4626,7 +4753,7 @@ PIXI.WebGLRenderer = function(width, height, view, transparent, antialias)
     this.resize(this.width, this.height);
     this.contextLost = false;
 
-	PIXI.activateShader(PIXI.defaultShader);
+	PIXI.pushShader(PIXI.defaultShader);
 
     this.stageRenderGroup = new PIXI.WebGLRenderGroup(this.gl);
     
@@ -4785,8 +4912,8 @@ PIXI.WebGLRenderer.updateTexture = function(texture)
 	 	gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
 
 		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, texture.source);
-		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, texture.scaleMode === PIXI.BaseTexture.SCALE_MODE.LINEAR ? gl.LINEAR : gl.NEAREST);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, texture.scaleMode === PIXI.BaseTexture.SCALE_MODE.LINEAR ? gl.LINEAR : gl.NEAREST);
 
 		// reguler...
 
@@ -5315,7 +5442,10 @@ PIXI.WebGLBatch.prototype.update = function()
 	var indexRun = 0;
 
 	var displayObject = this.head;
-
+	var verticies = this.verticies;
+	var uvs = this.uvs;
+	var colors = this.colors;
+	
 	while(displayObject)
 	{
 		if(displayObject.vcount === PIXI.visibleCount)
@@ -5343,17 +5473,17 @@ PIXI.WebGLBatch.prototype.update = function()
 			tx = worldTransform[2];
 			ty = worldTransform[5];
 
-			this.verticies[index + 0 ] = a * w1 + c * h1 + tx; 
-			this.verticies[index + 1 ] = d * h1 + b * w1 + ty;
+			verticies[index + 0 ] = a * w1 + c * h1 + tx; 
+			verticies[index + 1 ] = d * h1 + b * w1 + ty;
 
-			this.verticies[index + 2 ] = a * w0 + c * h1 + tx; 
-			this.verticies[index + 3 ] = d * h1 + b * w0 + ty; 
+			verticies[index + 2 ] = a * w0 + c * h1 + tx; 
+			verticies[index + 3 ] = d * h1 + b * w0 + ty; 
 
-			this.verticies[index + 4 ] = a * w0 + c * h0 + tx; 
-			this.verticies[index + 5 ] = d * h0 + b * w0 + ty; 
+			verticies[index + 4 ] = a * w0 + c * h0 + tx; 
+			verticies[index + 5 ] = d * h0 + b * w0 + ty; 
 
-			this.verticies[index + 6] =  a * w1 + c * h0 + tx; 
-			this.verticies[index + 7] =  d * h0 + b * w1 + ty; 
+			verticies[index + 6] =  a * w1 + c * h0 + tx; 
+			verticies[index + 7] =  d * h0 + b * w1 + ty; 
 
 			if(displayObject.updateFrame || displayObject.texture.updateFrame)
 			{
@@ -5365,17 +5495,17 @@ PIXI.WebGLBatch.prototype.update = function()
 				var tw = texture.baseTexture.width;
 				var th = texture.baseTexture.height;
 
-				this.uvs[index + 0] = frame.x / tw;
-				this.uvs[index +1] = frame.y / th;
+				uvs[index + 0] = frame.x / tw;
+				uvs[index +1] = frame.y / th;
 
-				this.uvs[index +2] = (frame.x + frame.width) / tw;
-				this.uvs[index +3] = frame.y / th;
+				uvs[index +2] = (frame.x + frame.width) / tw;
+				uvs[index +3] = frame.y / th;
 
-				this.uvs[index +4] = (frame.x + frame.width) / tw;
-				this.uvs[index +5] = (frame.y + frame.height) / th; 
+				uvs[index +4] = (frame.x + frame.width) / tw;
+				uvs[index +5] = (frame.y + frame.height) / th; 
 
-				this.uvs[index +6] = frame.x / tw;
-				this.uvs[index +7] = (frame.y + frame.height) / th;
+				uvs[index +6] = frame.x / tw;
+				uvs[index +7] = (frame.y + frame.height) / th;
 
 				displayObject.updateFrame = false;
 			}
@@ -5386,7 +5516,7 @@ PIXI.WebGLBatch.prototype.update = function()
 				displayObject.cacheAlpha = displayObject.worldAlpha;
 
 				var colorIndex = indexRun * 4;
-				this.colors[colorIndex] = this.colors[colorIndex + 1] = this.colors[colorIndex + 2] = this.colors[colorIndex + 3] = displayObject.worldAlpha;
+				colors[colorIndex] = colors[colorIndex + 1] = colors[colorIndex + 2] = colors[colorIndex + 3] = displayObject.worldAlpha;
 				this.dirtyColors = true;
 			}
 		}
@@ -5394,17 +5524,7 @@ PIXI.WebGLBatch.prototype.update = function()
 		{
 			index = indexRun * 8;
 
-			this.verticies[index + 0 ] = 0;
-			this.verticies[index + 1 ] = 0;
-
-			this.verticies[index + 2 ] = 0;
-			this.verticies[index + 3 ] = 0;
-
-			this.verticies[index + 4 ] = 0;
-			this.verticies[index + 5 ] = 0;
-
-			this.verticies[index + 6] = 0;
-			this.verticies[index + 7] = 0;
+			verticies[index + 0 ] = verticies[index + 1 ] = verticies[index + 2 ] = verticies[index + 3 ] = verticies[index + 4 ] = verticies[index + 5 ] = verticies[index + 6] = 	verticies[index + 7] = 0;
 		}
 
 		indexRun++;
@@ -5446,7 +5566,7 @@ PIXI.WebGLBatch.prototype.render = function(start, end)
 	gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.verticies)
     gl.vertexAttribPointer(shaderProgram.vertexPositionAttribute, 2, gl.FLOAT, false, 0, 0);
 	// update the uvs
-	var isDefault = (shaderProgram == PIXI.shaderProgram)
+	//var isDefault = (shaderProgram == PIXI.shaderProgram)
 
    	gl.bindBuffer(gl.ARRAY_BUFFER, this.uvBuffer);
 
@@ -5799,7 +5919,7 @@ PIXI.WebGLRenderGroup.prototype.handleFilterBlock = function(renderable, project
 				filter.shader = shader
 			}
 			
-			PIXI.activateShader(filter.shader);
+			PIXI.pushShader(filter.shader);
 			gl.uniform2f(PIXI.currentShader.projectionVector, projection.x, projection.y);
 		}
 		else
@@ -6549,11 +6669,25 @@ PIXI.CanvasRenderer = function(width, height, view, transparent)
 	 */
 	this.context = this.view.getContext("2d");
 
+	//some filter variables
+	this.smoothProperty = null;
+
+	if('imageSmoothingEnabled' in this.context)
+		this.smoothProperty = 'imageSmoothingEnabled';
+	else if('webkitImageSmoothingEnabled' in this.context)
+		this.smoothProperty = 'webkitImageSmoothingEnabled';
+	else if('mozImageSmoothingEnabled' in this.context)
+		this.smoothProperty = 'mozImageSmoothingEnabled';
+	else if('oImageSmoothingEnabled' in this.context)
+		this.smoothProperty = 'oImageSmoothingEnabled';
+
+	this.scaleMode = null;
+
 	this.refresh = true;
 	// hack to enable some hardware acceleration!
 	//this.view.style["transform"] = "translatez(0)";
 	
-    this.view.width = this.width;
+	this.view.width = this.width;
 	this.view.height = this.height;  
 	this.count = 0;
 }
@@ -6669,8 +6803,14 @@ PIXI.CanvasRenderer.prototype.renderDisplayObject = function(displayObject)
 				context.globalAlpha = displayObject.worldAlpha;
 				
 				context.setTransform(transform[0], transform[3], transform[1], transform[4], transform[2], transform[5]);
+
+				//if smoothingEnabled is supported and we need to change the smoothing property for this texture
+				if(this.smoothProperty && this.scaleMode !== displayObject.texture.baseTexture.scaleMode) {
+					this.scaleMode = displayObject.texture.baseTexture.scaleMode;
+					context[this.smoothProperty] = (this.scaleMode === PIXI.BaseTexture.SCALE_MODE.LINEAR);
+				}
 					
-				context.drawImage(displayObject.texture.baseTexture.source, 
+				context.drawImage(displayObject.texture.baseTexture.source,
 								   frame.x,
 								   frame.y,
 								   frame.width,
@@ -6693,6 +6833,7 @@ PIXI.CanvasRenderer.prototype.renderDisplayObject = function(displayObject)
 		}
 		else if(displayObject instanceof PIXI.CustomRenderable)
 		{
+			context.setTransform(transform[0], transform[3], transform[1], transform[4], transform[2], transform[5]);
 			displayObject.renderCanvas(this);
 		}
 		else if(displayObject instanceof PIXI.Graphics)
@@ -6702,25 +6843,27 @@ PIXI.CanvasRenderer.prototype.renderDisplayObject = function(displayObject)
 		}
 		else if(displayObject instanceof PIXI.FilterBlock)
 		{
-			if(PIXI.FilterBlock.data instanceof PIXI.Graphics)
-			{
+			if(displayObject.data instanceof PIXI.Graphics)
+ 			{
+				var mask = displayObject.data;
+
 				if(displayObject.open)
 				{
 					context.save();
 					
-					var cacheAlpha = displayObject.mask.alpha;
-					var maskTransform = displayObject.mask.worldTransform;
+					var cacheAlpha = mask.alpha;
+					var maskTransform = mask.worldTransform;
 					
 					context.setTransform(maskTransform[0], maskTransform[3], maskTransform[1], maskTransform[4], maskTransform[2], maskTransform[5])
 					
-					displayObject.mask.worldAlpha = 0.5;
+					mask.worldAlpha = 0.5;
 					
 					context.worldAlpha = 0;
 					
-					PIXI.CanvasGraphics.renderGraphicsMask(displayObject.mask, context);
+					PIXI.CanvasGraphics.renderGraphicsMask(mask, context);
 					context.clip();
 					
-					displayObject.mask.worldAlpha = cacheAlpha;
+					mask.worldAlpha = cacheAlpha;
 				}
 				else
 				{
@@ -9182,7 +9325,8 @@ spine.Bone.yDown = true;
 PIXI.CustomRenderable = function()
 {
 	PIXI.DisplayObject.call( this );
-
+	
+	this.renderable = true;
 }
 
 // constructor
@@ -9240,7 +9384,7 @@ PIXI.texturesToDestroy = [];
  * @constructor
  * @param source {String} the source object (image or canvas)
  */
-PIXI.BaseTexture = function(source)
+PIXI.BaseTexture = function(source, scaleMode)
 {
 	PIXI.EventTarget.call( this );
 
@@ -9261,6 +9405,14 @@ PIXI.BaseTexture = function(source)
 	 * @readOnly
 	 */
 	this.height = 100;
+
+	/**
+	 * The scale mode to apply when scaling this texture
+	 * @property scaleMode
+	 * @type PIXI.BaseTexture.SCALE_MODE
+	 * @default PIXI.BaseTexture.SCALE_MODE.LINEAR
+	 */
+	this.scaleMode = scaleMode || PIXI.BaseTexture.SCALE_MODE.DEFAULT;
 
 	/**
 	 * [read-only] Describes if the base texture has loaded or not
@@ -9346,7 +9498,7 @@ PIXI.BaseTexture.prototype.destroy = function()
  * @param imageUrl {String} The image url of the texture
  * @return BaseTexture
  */
-PIXI.BaseTexture.fromImage = function(imageUrl, crossorigin)
+PIXI.BaseTexture.fromImage = function(imageUrl, crossorigin, scaleMode)
 {
 	var baseTexture = PIXI.BaseTextureCache[imageUrl];
 	if(!baseTexture)
@@ -9359,12 +9511,18 @@ PIXI.BaseTexture.fromImage = function(imageUrl, crossorigin)
 			image.crossOrigin = '';
 		}
 		image.src = imageUrl;
-		baseTexture = new PIXI.BaseTexture(image);
+		baseTexture = new PIXI.BaseTexture(image, scaleMode);
 		PIXI.BaseTextureCache[imageUrl] = baseTexture;
 	}
 
 	return baseTexture;
 }
+
+PIXI.BaseTexture.SCALE_MODE = {
+	DEFAULT: 0, //default to LINEAR
+	LINEAR: 0,
+	NEAREST: 1
+};
 
 /**
  * @author Mat Groves http://matgroves.com/ @Doormat23
@@ -9502,13 +9660,13 @@ PIXI.Texture.prototype.setFrame = function(frame)
  * @param crossorigin {Boolean} Whether requests should be treated as crossorigin
  * @return Texture
  */
-PIXI.Texture.fromImage = function(imageUrl, crossorigin)
+PIXI.Texture.fromImage = function(imageUrl, crossorigin, scaleMode)
 {
 	var texture = PIXI.TextureCache[imageUrl];
 
 	if(!texture)
 	{
-		texture = new PIXI.Texture(PIXI.BaseTexture.fromImage(imageUrl, crossorigin));
+		texture = new PIXI.Texture(PIXI.BaseTexture.fromImage(imageUrl, crossorigin, scaleMode));
 		PIXI.TextureCache[imageUrl] = texture;
 	}
 
@@ -9540,9 +9698,9 @@ PIXI.Texture.fromFrame = function(frameId)
  * @param canvas {Canvas} The canvas element source of the texture
  * @return Texture
  */
-PIXI.Texture.fromCanvas = function(canvas)
+PIXI.Texture.fromCanvas = function(canvas, scaleMode)
 {
-	var	baseTexture = new PIXI.BaseTexture(canvas);
+	var	baseTexture = new PIXI.BaseTexture(canvas, scaleMode);
 	return new PIXI.Texture(baseTexture);
 }
 
@@ -9578,7 +9736,7 @@ PIXI.Texture.removeTextureFromCache = function(id)
 // this is more for webGL.. it contains updated frames..
 PIXI.Texture.frameUpdates = [];
 
-
+PIXI.Texture.SCALE_MODE = PIXI.BaseTexture.SCALE_MODE;
 /**
  * @author Mat Groves http://matgroves.com/ @Doormat23
  */
